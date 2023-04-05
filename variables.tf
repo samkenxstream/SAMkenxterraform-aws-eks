@@ -27,7 +27,7 @@ variable "cluster_name" {
 }
 
 variable "cluster_version" {
-  description = "Kubernetes `<major>.<minor>` version to use for the EKS cluster (i.e.: `1.22`)"
+  description = "Kubernetes `<major>.<minor>` version to use for the EKS cluster (i.e.: `1.24`)"
   type        = string
   default     = null
 }
@@ -59,13 +59,13 @@ variable "subnet_ids" {
 variable "cluster_endpoint_private_access" {
   description = "Indicates whether or not the Amazon EKS private API server endpoint is enabled"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "cluster_endpoint_public_access" {
   description = "Indicates whether or not the Amazon EKS public API server endpoint is enabled"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "cluster_endpoint_public_access_cidrs" {
@@ -86,10 +86,24 @@ variable "cluster_service_ipv4_cidr" {
   default     = null
 }
 
+variable "cluster_service_ipv6_cidr" {
+  description = "The CIDR block to assign Kubernetes pod and service IP addresses from if `ipv6` was specified when the cluster was created. Kubernetes assigns service addresses from the unique local address range (fc00::/7) because you can't specify a custom IPv6 CIDR block when you create the cluster"
+  type        = string
+  default     = null
+}
+
+variable "outpost_config" {
+  description = "Configuration for the AWS Outpost to provision the cluster on"
+  type        = any
+  default     = {}
+}
+
 variable "cluster_encryption_config" {
   description = "Configuration block with encryption configuration for the cluster"
-  type        = list(any)
-  default     = []
+  type        = any
+  default = {
+    resources = ["secrets"]
+  }
 }
 
 variable "attach_cluster_encryption_policy" {
@@ -123,7 +137,7 @@ variable "cluster_timeouts" {
 variable "create_kms_key" {
   description = "Controls if a KMS key for cluster encryption should be created"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "kms_key_description" {
@@ -145,7 +159,7 @@ variable "enable_kms_key_rotation" {
 }
 
 variable "kms_key_enable_default_policy" {
-  description = "Specifies whether to enable the default key policy. Defaults to `true`"
+  description = "Specifies whether to enable the default key policy. Defaults to `false`"
   type        = bool
   default     = false
 }
@@ -219,19 +233,19 @@ variable "cloudwatch_log_group_kms_key_id" {
 ################################################################################
 
 variable "create_cluster_security_group" {
-  description = "Determines if a security group is created for the cluster or use the existing `cluster_security_group_id`"
+  description = "Determines if a security group is created for the cluster. Note: the EKS service creates a primary security group for the cluster by default"
   type        = bool
   default     = true
 }
 
 variable "cluster_security_group_id" {
-  description = "Existing security group ID to be attached to the cluster. Required if `create_cluster_security_group` = `false`"
+  description = "Existing security group ID to be attached to the cluster"
   type        = string
   default     = ""
 }
 
 variable "vpc_id" {
-  description = "ID of the VPC where the cluster and its nodes will be provisioned"
+  description = "ID of the VPC where the cluster security group will be provisioned"
   type        = string
   default     = null
 }
@@ -244,7 +258,7 @@ variable "cluster_security_group_name" {
 
 variable "cluster_security_group_use_name_prefix" {
   description = "Determines whether cluster security group name (`cluster_security_group_name`) is used as a prefix"
-  type        = string
+  type        = bool
   default     = true
 }
 
@@ -300,7 +314,7 @@ variable "node_security_group_name" {
 
 variable "node_security_group_use_name_prefix" {
   description = "Determines whether node security group name (`node_security_group_name`) is used as a prefix"
-  type        = string
+  type        = bool
   default     = true
 }
 
@@ -316,24 +330,16 @@ variable "node_security_group_additional_rules" {
   default     = {}
 }
 
+variable "node_security_group_enable_recommended_rules" {
+  description = "Determines whether to enable recommended security group rules for the node security group created. This includes node-to-node TCP ingress on ephemeral ports and allows all egress traffic"
+  type        = bool
+  default     = true
+}
+
 variable "node_security_group_tags" {
   description = "A map of additional tags to add to the node security group created"
   type        = map(string)
   default     = {}
-}
-
-# TODO - at next breaking change, make 169.254.169.123/32 the default
-variable "node_security_group_ntp_ipv4_cidr_block" {
-  description = "IPv4 CIDR block to allow NTP egress. Default is public IP space, but [Amazon Time Sync Service](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/set-time.html) can be used as well with `[\"169.254.169.123/32\"]`"
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
-# TODO - at next breaking change, make fd00:ec2::123/128 the default
-variable "node_security_group_ntp_ipv6_cidr_block" {
-  description = "IPv4 CIDR block to allow NTP egress. Default is public IP space, but [Amazon Time Sync Service](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/set-time.html) can be used as well with `[\"fd00:ec2::123/128\"]`"
-  type        = list(string)
-  default     = ["::/0"]
 }
 
 ################################################################################
@@ -406,8 +412,8 @@ variable "iam_role_permissions_boundary" {
 
 variable "iam_role_additional_policies" {
   description = "Additional policies to be added to the IAM role"
-  type        = list(string)
-  default     = []
+  type        = map(string)
+  default     = {}
 }
 
 # TODO - hopefully this can be removed once the AWS endpoint is named properly in China
@@ -426,7 +432,7 @@ variable "iam_role_tags" {
 
 variable "cluster_encryption_policy_use_name_prefix" {
   description = "Determines whether cluster encryption policy name (`cluster_encryption_policy_name`) is used as a prefix"
-  type        = string
+  type        = bool
   default     = true
 }
 
@@ -454,6 +460,12 @@ variable "cluster_encryption_policy_tags" {
   default     = {}
 }
 
+variable "dataplane_wait_duration" {
+  description = "Duration to wait after the EKS cluster has become active before creating the dataplane components (EKS managed nodegroup(s), self-managed nodegroup(s), Fargate profile(s))"
+  type        = string
+  default     = "30s"
+}
+
 ################################################################################
 # EKS Addons
 ################################################################################
@@ -461,6 +473,12 @@ variable "cluster_encryption_policy_tags" {
 variable "cluster_addons" {
   description = "Map of cluster addon configurations to enable for the cluster. Addon name can be the map keys or set with `name`"
   type        = any
+  default     = {}
+}
+
+variable "cluster_addons_timeouts" {
+  description = "Create, update, and delete timeout configurations for the cluster addons"
+  type        = map(string)
   default     = {}
 }
 
